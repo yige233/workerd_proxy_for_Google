@@ -1,168 +1,85 @@
+//将代码改造为针对自托管workerd。因为一般会套反向代理
+
 /** 最终外部访问的域名 */
 const outerDomain = "search.example.com";
 
+//都自建谷歌镜像了，服务器的ip肯定没有被谷歌屏蔽，不需要特意用ipv6，因此也不需要应对图片搜索
 /** 反代目标网站 */
 const upstreamDomain = "www.google.com.hk";
 
 /** 访问区域黑名单。如果不额外套cf的cdn，大概率是没有用的。 */
 const blockedRegion = ["TK"];
 
-/** 资源重定向Map */
-const replaceMap = {
-  $upstream: "$custom_domain",
+/** 浏览器打开无痕模式访问Google，调好设置后把cookie复制过来。有了这个，镜像站就能显示为深色模式了（！！！） */
+const cookies = ``;
+
+/** 字符串替换的Map */
+const strReplaceMap = {
+  [upstreamDomain]: outerDomain,
   "www.google.com/": `${outerDomain}/`,
   "gstatic.com": "gstatic.cn",
   "ajax.googleapis.com": "ajax.lug.ustc.edu.cn",
   "fonts.googleapis.com": "fonts.googleapis.cn",
   "themes.googleusercontent.com": "google-themes.lug.ustc.edu.cn",
   "www.gravatar.com/avatar": "dn-qiniu-avatar.qbox.me/avatar",
-  "www.google.co.jp": "$custom_domain",
-  "www.google.com.hk": "$custom_domain",
-  "www.google.com.sg": "$custom_domain",
-  "books.google.co.jp": "$custom_domain",
-  "books.google.com.hk": "$custom_domain",
-  "maps.google.com.hk": "$custom_domain",
-  "maps.google.co.jp": "$custom_domain",
-  "maps.google.com": "$custom_domain",
-  "books.google.com": "$custom_domain",
+  "www.google.co.jp": outerDomain,
+  "www.google.com.hk": outerDomain,
+  "www.google.com.sg": outerDomain,
+  "books.google.co.jp": outerDomain,
+  "books.google.com.hk": outerDomain,
+  "maps.google.com.hk": outerDomain,
+  "maps.google.co.jp": outerDomain,
+  "maps.google.com": outerDomain,
+  "books.google.com": outerDomain,
+  /** 插入自定义代码以及注册service worker的代码 */
+  "<head>": `<head><script src="https://${outerDomain}/insertJS-head"></script>
+  <script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker
+        .register("sw.js")
+        .then((registration) => {
+          console.log("Service Worker注册成功:", registration.scope);
+        })
+        .catch((error) => {
+          console.error("Service Worker注册失败:", error);
+        });
+    });
+  }
+  </script>`,
+  /** 插入自定义代码，但加载顺序最靠后 */
+  "</body>": `<script src="https://${outerDomain}/insertJS-body"></script></body>`,
 };
 
-/** 浏览器打开无痕模式访问Google，调好设置后把cookie复制过来。有了这个，镜像站就能显示为深色模式了（！！！） */
-const cookies = ``;
+/** 对特定url的自定义响应 */
+const customResponseMap = new Map([
+  ["sw.js", (env) => fetchJs(env, "sw.js")],
+  ["insertJS-head", (env) => fetchJs(env, "insert-head.js")],
+  ["insertJS-body", (env) => fetchJs(env, "insert-body.js")],
+]);
 
-/** 可以在Google主页插入一段js代码 */
-const inscertScript = `
-class Notify {
-  alert(title, ...body) {
-    return alert([title, ...body].join("\\n"));
-  }
-  notify(title, ...body) {
-    const noti = new Notification(title, { body: body.join("\\n") });
-    noti.addEventListener("click", () => noti.close());
-    setTimeout(() => noti.close(), 1e4);
-    return noti;
-  }
-  constructor(title, ...body) {
-    if (!("Notification" in window)) {
-      return this.alert(title, ...body);
-    }
-    if (Notification.permission === "granted") {
-      return this.notify(title, ...body);
-    }
-    if (Notification.permission === "denied") {
-      return this.alert(title, ...body);
-    }
-    if (Notification.permission !== "denied") {
-      Notification.requestPermission().then((permission) => {
-        if (permission === "granted") {
-          return this.notify(title, ...body);
-        }
-        console.warn("用户拒绝授予通知弹窗权限");
-        return this.alert(title, ...body);
-      });
-    }
-  }
-}
-if (document.title=="Google") {
-  function firstClick() {
-    new Notify("这是一个谷歌镜像站");
-    document.removeEventListener("click", firstClick);
-   }
-  document.addEventListener("click", firstClick);
-}
- `;
-
-//替换html中的一些东西
-function modifyResponseText(text, upstreamDomain, hostName) {
-  for (let value in replaceMap) {
-    let key = replaceMap[value];
-    if (value == "$upstream") {
-      value = upstreamDomain;
-    }
-    if (value == "$custom_domain") {
-      value = hostName;
-    }
-    if (key == "$upstream") {
-      key = upstreamDomain;
-    }
-    if (key == "$custom_domain") {
-      key = hostName;
-    }
-    text = text.replace(new RegExp(value, "g"), key);
-  }
-  return text;
-}
-//主要处理函数。删除了判断https的部分，交给反向代理来处理。也删除了判断是否是图片搜索的部分。
-async function fetchAndApply(request) {
-  let parsedUrl;
-  try {
-    parsedUrl = new URL(request.url);
-  } catch (e) {
-    return new Response(`Invalid URL: ${request.url}`, { status: 400 });
-  }
-  /** 原始请求头 */
-  const reqHeaders = request.headers,
-    /** 若是通过cloudflare的cdn，获取请求区域ID */
-    region = reqHeaders.get("cf-ipcountry") || "",
-    /** 从原始请求头复制的新请求头对象 */
-    newReqHeaders = new MyHeaders(reqHeaders),
-    /** 需要添加的请求头 */
-    headersAddToNewReq = {
-      host: upstreamDomain,
-      cookie: cookies,
-      "accept-encoding": "gzip, deflate",
+/** 从本地获取js */
+async function fetchJs(context, filename) {
+  const response = await context.fetch(`http://dummy/${filename}`);
+  return new Response(await response.text(), {
+    status: 200,
+    headers: {
+      "content-type": "text/javascript;charset=utf-8",
     },
-    /** 需要添加的响应头 */
-    headersAddToRes = {
-      "cache-control": "public, max-age=14400",
-      "access-control-allow-origin": "*",
-      "access-control-allow-credentials": "true",
-    },
-    /** 需要移除的响应头 */
-    headersRemoveFromRes = ["content-security-policy", "content-security-policy-report-only", "clear-site-data"];
+  });
+}
 
-  if (blockedRegion.includes(region.toUpperCase())) {
-    return new Response("Access denied: WorkersProxy is not available in your region yet.", {
-      status: 403,
-    });
+/**
+ * 替换上游响应体中的目标字符
+ * @param {*} respsonseText 响应体
+ * @returns
+ */
+function modifyResponseText(respsonseText, strReplaceMap) {
+  for (const key in strReplaceMap) {
+    const value = strReplaceMap[key];
+    respsonseText = respsonseText.replace(new RegExp(key, "g"), value);
   }
-  /**
-   * 这里进行了workerd适应性改造，要修改url的host、protocol、port三项。因为反向代理是以http协议、内网host和非443端口访问服务的。
-   */
-  parsedUrl.protocol = "https:";
-  parsedUrl.port = 443;
-  parsedUrl.host = upstreamDomain;
-  newReqHeaders.setMultiple(headersAddToNewReq);
-  newReqHeaders.set("referer", parsedUrl.href);
-  try {
-    let requestBody = null;
-    const response = await fetch(parsedUrl.href, {
-      method: request.method,
-      headers: newReqHeaders,
-    });
-    const status = response.status,
-      newResponseHeaders = new MyHeaders(response.headers),
-      contentType = newResponseHeaders.get("content-type");
-
-    newResponseHeaders.setMultiple(headersAddToRes);
-    newResponseHeaders.deleteMultiple(...headersRemoveFromRes);
-
-    if (contentType.includes("text/html") && contentType.includes("UTF-8")) {
-      const originBody = await response.text();
-      requestBody = modifyResponseText(originBody, upstreamDomain, outerDomain); //这里替换函数的第三个参数也要改成outerDomain
-      requestBody = requestBody.replace("</body>", `</body><script>${inscertScript}</script>`);
-    } else {
-      requestBody = response.body;
-    }
-    return new Response(status >= 204 && status < 300 ? null : requestBody, {
-      status,
-      headers: newResponseHeaders,
-    });
-  } catch (e) {
-    return new Response(`Worker 罢工了：${e.message || e.toString()}`, {
-      status: 500,
-    });
-  }
+  return respsonseText;
 }
 
 class MyHeaders extends Headers {
@@ -189,6 +106,93 @@ class MyHeaders extends Headers {
   }
 }
 
-addEventListener("fetch", (event) => {
-  event.respondWith(fetchAndApply(event.request));
-});
+//这里采用了es module的写法。相较于注册fetch事件监听器的方法，最大的一个点就是console.log有输出了（）
+export default {
+  //主要处理函数。删除了判断https的部分，交给反向代理来处理。也删除了判断是否是图片搜索的部分。
+  async fetch(request, env) {
+    /** URL对象 */
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(request.url);
+    } catch (e) {
+      return new Response(`Invalid URL: ${request.url}`, { status: 400 });
+    }
+    //如果符合自定义响应规则，就使用自定义响应
+    const customResponse =
+      customResponseMap.get(parsedUrl.pathname.slice(1)) || undefined;
+    if (customResponse) {
+      return customResponse(env.files, parsedUrl);
+    }
+    /** 原始请求头 */
+    const reqHeaders = request.headers,
+      /** 若是通过cloudflare的cdn，获取请求区域ID */
+      region = reqHeaders.get("cf-ipcountry") || "",
+      /** 从原始请求头复制的新请求头对象 */
+      newReqHeaders = new MyHeaders(reqHeaders),
+      /** 需要添加的请求头 */
+      headersAddToNewReq = {
+        host: upstreamDomain,
+        cookie: cookies,
+        "accept-encoding": "gzip, deflate",
+      },
+      /** 需要添加的响应头 */
+      headersAddToRes = {
+        "cache-control": "public, max-age=14400",
+        "access-control-allow-origin": "*",
+        "access-control-allow-credentials": "true",
+      },
+      /** 需要移除的响应头 */
+      headersRemoveFromRes = [
+        "content-security-policy",
+        "content-security-policy-report-only",
+        "clear-site-data",
+      ];
+
+    if (blockedRegion.includes(region.toUpperCase())) {
+      return new Response(
+        "Access denied: WorkersProxy is not available in your region yet.",
+        {
+          status: 403,
+        }
+      );
+    }
+    /**
+     * 这里进行了workerd适应性改造，要修改url的host、protocol、port三项。
+     * 因为反向代理是以http协议、内网host和非443端口访问服务的。
+     */
+    parsedUrl.protocol = "https:";
+    parsedUrl.port = 443;
+    parsedUrl.host = upstreamDomain;
+    newReqHeaders.setMultiple(headersAddToNewReq);
+    newReqHeaders.set("referer", parsedUrl.href);
+    try {
+      let requestBody = null;
+      const response = await fetch(parsedUrl.href, {
+        method: request.method,
+        headers: newReqHeaders,
+      });
+      const status = response.status,
+        newResponseHeaders = new MyHeaders(response.headers),
+        contentType = newResponseHeaders.get("content-type");
+
+      newResponseHeaders.setMultiple(headersAddToRes);
+      newResponseHeaders.deleteMultiple(...headersRemoveFromRes);
+
+      if (contentType.includes("text/html") && contentType.includes("UTF-8")) {
+        //为html内容进行字符替换
+        const originBody = await response.text();
+        requestBody = modifyResponseText(originBody, strReplaceMap);
+      } else {
+        requestBody = response.body;
+      }
+      return new Response(status >= 204 && status < 300 ? null : requestBody, {
+        status,
+        headers: newResponseHeaders,
+      });
+    } catch (e) {
+      return new Response(`Worker 罢工了：${e.message || e.toString()}`, {
+        status: 500,
+      });
+    }
+  },
+};

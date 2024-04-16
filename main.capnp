@@ -3,6 +3,7 @@ using Workerd = import "/workerd/workerd.capnp";
 const config :Workerd.Config = (
   services = [
     (name = "google-mirror", worker = .mainWorker),
+    (name = "client-js", disk = "./client-js"),
   ],
 
   sockets = [
@@ -16,6 +17,11 @@ const config :Workerd.Config = (
 );
 
 const mainWorker :Workerd.Worker = (
-  serviceWorkerScript = embed "google.js",
+  modules = [
+    (name = "worker", esModule = embed "google.js"),
+  ],
+  bindings = [
+    (name = "files", service = "client-js"),
+  ],
   compatibilityDate = "2024-03-25",
 );
