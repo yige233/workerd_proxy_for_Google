@@ -1,9 +1,9 @@
 class Notify {
   alert(title, ...body) {
-    return alert([title, ...body].join("\\n"));
+    return alert([title, ...body].join("\n"));
   }
   notify(title, ...body) {
-    const noti = new Notification(title, { body: body.join("\\n") });
+    const noti = new Notification(title, { body: body.join("\n") });
     noti.addEventListener("click", () => noti.close());
     setTimeout(() => noti.close(), 1e4);
     return noti;
@@ -31,7 +31,10 @@ class Notify {
 }
 if (document.title == "Google") {
   function firstClick() {
-    new Notify("这是一个谷歌镜像站");
+    const notify = new Notify("这是一个谷歌镜像站", "https://github.com/yige233/workerd_proxy_for_Google");
+    if (notify.addEventListener) {
+      notify.addEventListener("click", () => window.open("https://github.com/yige233/workerd_proxy_for_Google"));
+    }
     document.removeEventListener("click", firstClick);
   }
   document.addEventListener("click", firstClick);

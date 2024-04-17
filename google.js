@@ -10,7 +10,7 @@ const upstreamDomain = "www.google.com.hk";
 /** 访问区域黑名单。如果不额外套cf的cdn，大概率是没有用的。 */
 const blockedRegion = ["TK"];
 
-/** 浏览器打开无痕模式访问Google，调好设置后把cookie复制过来。有了这个，镜像站就能显示为深色模式了（！！！） */
+/** 浏览器打开无痕模式访问Google，调好设置后把cookie复制过来。可以让镜像站始终使用自定义好的设置（比如深色模式） */
 const cookies = ``;
 
 /** 字符串替换的Map */
@@ -53,18 +53,27 @@ const strReplaceMap = {
 
 /** 对特定url的自定义响应 */
 const customResponseMap = new Map([
-  ["sw.js", (env) => fetchJs(env, "sw.js")],
-  ["insertJS-head", (env) => fetchJs(env, "insert-head.js")],
-  ["insertJS-body", (env) => fetchJs(env, "insert-body.js")],
+  /** service worker代码 */
+  ["sw.js", (env) => fetchFile(env, "sw.js")],
+  /** 站点无法连接时，使用的错误页面模板 */
+  ["error-page-template", (env) => fetchFile(env, "error-template.html")],
+  ["insertJS-head", (env) => fetchFile(env, "insert-head.js")],
+  ["insertJS-body", (env) => fetchFile(env, "insert-body.js")],
 ]);
 
 /** 从本地获取js */
-async function fetchJs(context, filename) {
+async function fetchFile(context, filename) {
+  const TYPES = {
+    js: "text/javascript;charset=utf-8",
+    html: "text/html;charset=utf-8",
+  };
+  const fileType = TYPES[filename.split(".").pop().toLowerCase()];
+  const parseMethod = fileType.startsWith("text") ? "text" : "blob";
   const response = await context.fetch(`http://dummy/${filename}`);
-  return new Response(await response.text(), {
+  return new Response(await response[parseMethod](), {
     status: 200,
     headers: {
-      "content-type": "text/javascript;charset=utf-8",
+      "content-type": fileType,
     },
   });
 }
