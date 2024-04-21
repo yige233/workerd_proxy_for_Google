@@ -48,19 +48,13 @@ self.addEventListener("install", (event) => {
   event.waitUntil(preCahce());
 });
 self.addEventListener("fetch", (event) => {
-  const cacheListSet = new Set(cacheList);
   const url = new URL(event.request.url);
   const mode = event.request.mode;
-  if (mode == "no-cors" && !cacheListSet.has(url.pathname)) {
-    //如果该请求的模式是"no-cors"，且不处于预缓存列表内，直接让浏览器处理请求
-    return undefined;
-  }
   event.respondWith(
     (async () => {
       const cache = await caches.open(cacheStorageKey);
       const cachedResponse = await cache.match(event.request.url);
-      const customResponse =
-        customResponseMap.get(url.pathname.slice(1)) || undefined;
+      const customResponse = customResponseMap.get(url.pathname.slice(1)) || undefined;
       if (customResponse) {
         //如果url符合自定义响应的规则，返回对应的自定义响应
         return customResponse(url, event.request);
@@ -84,11 +78,11 @@ self.addEventListener("fetch", (event) => {
       } catch (e) {
         //错误处理
         if (mode !== "navigate") {
-          return new Response(null, { status: 500 });
+          return new Response(null, { status: e.status || 500 });
         }
         //如果请求模式是导航（当前请求会导致文档重新加载），构建错误页面
-        const page404 = await cache.match("/error-page-template");
-        const html = await page404.text();
+        const errorPage = await cache.match("/error-page-template");
+        const html = await errorPage.text();
         const body = fillTemplate(html, {
           title: "无法连接到镜像站点",
           host: url.host,
@@ -97,7 +91,6 @@ self.addEventListener("fetch", (event) => {
         });
         return new Response(body, {
           status: e.status || 500,
-          headers: page404.headers,
         });
       }
     })()
