@@ -32,14 +32,23 @@ export function buildResponse(status, headers, body) {
  * @param {string} url 新的请求url
  * @returns
  */
-export function modifyRequestURL(request, url) {
+export async function modifyRequestURL(request, url) {
   try {
     // 在客户端sw修改原始请求并不容易，因为Request对象设计上是不可变的。所以这里采用构造新请求，并将原始请求的其他属性复制过去的方式。
-    const init = {};
-    for (const property in request) {
-      init[property] = request[property];
-    }
-    return new Request(url, { ...init, keepalive: false, duplex: "half" });
+    const body = await request.clone().blob();
+    const init = {
+      duplex: "half",
+      credentials: request.credentials,
+      headers: request.headers,
+      method: request.method,
+      redirect: request.redirect,
+      referrer: request.referrer,
+      referrerPolicy: request.referrerPolicy,
+      mode: request.mode,
+      keepalive: false,
+      body: body.size ? body : undefined,
+    };
+    return new Request(url, init);
   } catch (e) {
     // 然而即使是这样也可能会出错
     console.error("构造新请求失败: ", e);

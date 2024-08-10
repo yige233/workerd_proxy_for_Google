@@ -105,27 +105,27 @@ function matchResponseByPath(request) {
 /**
  * 构建代理请求
  * @param {Request} request 原始请求
- * @returns {Request}
+ * @returns {Promise<Request>}
  */
-function buildProxiedRequest(request) {
+async function buildProxiedRequest(request) {
   const url = new URL(request.url);
   if (proxyAllowedWhiteList.some((regex) => regex.test(url.host))) {
-    return modifyRequestURL(request, `//${currentHost}/proxy?url=${encodeURIComponent(url.href)}`);
+    return await modifyRequestURL(request, `//${currentHost}/proxy?url=${encodeURIComponent(url.href)}`);
   }
   return request;
 }
 /**
  * 通过匹配请求Host来修改请求（返回新请求）目前的功能只有替换Host。
  * @param {Request} request 原始请求
- * @returns {Request}
+ * @returns {Promise<Request>}
  */
-function modifyRequestByHost(request) {
+async function modifyRequestByHost(request) {
   const url = new URL(request.url);
   if (url.host == currentHost) return request;
   const [searchValue, replaceTo] = Object.entries(replaceMapOfHost).find(([key]) => url.host.endsWith(key)) || [];
   if (replaceTo) {
     const modified = modifyURL(request.url, { host: url.host.replace(searchValue, replaceTo) });
-    return modifyRequestURL(request, modified.href);
+    return await modifyRequestURL(request, modified.href);
   }
   console.log("Not matched host:", url.host);
   return request;
@@ -213,9 +213,9 @@ self.addEventListener("fetch", (event) => {
       const matchedPath = matchResponseByPath(request);
       if (matchedPath) return matchedPath;
       // 尝试通过Host修改请求
-      const proxiedRequest = buildProxiedRequest(request);
+      const proxiedRequest = await buildProxiedRequest(request);
       // 尝试通过Host修改请求
-      const reqModifiedByHost = modifyRequestByHost(proxiedRequest);
+      const reqModifiedByHost = await modifyRequestByHost(proxiedRequest);
       // 尝试通过pathname修改请求
       const reqModifiedByPath = modifyRequestByPath(reqModifiedByHost);
       // 发出请求，获得原始响应
