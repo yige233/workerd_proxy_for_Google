@@ -168,7 +168,7 @@ async function doFetch(request) {
   try {
     return await fetch(request);
   } catch (e) {
-    const body = JSON.stringify({ title: "发出请求时出现了错误", host: request.url, error: `${e.name}: ${e.message}`, errorMessage: `<pre>${e.stack}</pre>` });
+    const body = JSON.stringify({ title: "发出请求时出现了错误", url: request.url, stack: e.stack });
     return buildResponse(500, { "content-type": "application/json;charset=UTF-8" }, body);
   }
 }
@@ -180,17 +180,20 @@ async function doFetch(request) {
  */
 async function buildHTMLPage(request, response) {
   const { status, statusText, type, ok } = response;
-  if (request.mode !== "navigate" || !ok || !["opaque", "opaqueredirect"].includes(type)) return response;
+  // 以下情况，不构建html错误页面：请求模式不是navigate；响应状态ok；是透明请求
+  if (request.mode !== "navigate" || ok || ["opaque", "opaqueredirect"].includes(type)) return response;
   const cache = await openCache();
   const pageTemplate = await cache.match("/error-template.html");
+  const errorBody = await response.json().catch(() => ({}));
   const replace = fillTemplate({
     status,
-    title: "无法连接到镜像站点",
-    host: request.url,
+    title: "无法连接到镜像站点" + (errorBody.title ? `：${errorBody.title}` : ""),
+    host: errorBody.url ?? request.url,
     error: `${status} ${statusText || ""}`,
-    errorMessage: `<a href='https://developer.mozilla.org/zh-CN/docs/Web/HTTP/Status/${status}'>关于此错误代码</a>`,
+    errorMessage: `<a href='https://developer.mozilla.org/zh-CN/docs/Web/HTTP/Status/${status}'>关于此错误代码</a><pre>${errorBody.stack ?? ""}</pre>`,
   });
-  return buildResponse(status || 500, { "content-type": "text/html;charset=UTF-8" }, replace(await pageTemplate.text()));
+  const result = buildResponse(status || 500, { "content-type": "text/html;charset=UTF-8" }, replace(await pageTemplate.text()));
+  return result;
 }
 self.addEventListener("install", () => {
   self.skipWaiting();

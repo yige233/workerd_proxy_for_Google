@@ -128,7 +128,7 @@ async function doFetch(request) {
   try {
     return await fetch(request);
   } catch (e) {
-    const body = JSON.stringify({ title: "发出请求时出现了错误", host: request.url, error: `${e.name}: ${e.message}`, errorMessage: `<pre>${e.stack}</pre>` });
+    const body = JSON.stringify({ title: "发出请求时出现了错误", url: request.url, stack: e.stack });
     return buildResponse(500, { "content-type": "application/json;charset=UTF-8" }, body);
   }
 }
