@@ -21,13 +21,15 @@ export function curry(fn, ...arg) {
  * @param {Context} context fetch执行的上下文
  * @param {string} namespace 文件的命名空间。为了共享文件，所有capnp配置都应拥有一个共同的根目录，然后再通过命名空间来区别具体使用的子目录。
  * @param {string} filepath 文件的路径（不包含命名空间）
+ * @param {Function} replacer 对文件中的内容进行替换。如果返回undefined，则不替换。
  * @returns
  */
-export async function fetchLocal(context, namespace, filepath) {
+export async function fetchLocal(context, namespace, filepath, replacer = undefined) {
   const TYPES = {
     json: "application/json;charset=utf-8",
     js: "text/javascript;charset=utf-8",
     html: "text/html;charset=utf-8",
+    xml: "text/xml;charset=utf-8",
     txt: "text/plain;charset=utf-8",
     ttf: "font/ttf",
     svg: "image/svg+xml",
@@ -44,7 +46,8 @@ export async function fetchLocal(context, namespace, filepath) {
   const mimeType = TYPES[fileExt.toLowerCase()] || "application/octet-stream";
   const response = await context.fetch(`http://dummy/${namespace}/${filepath}`);
   if (response.ok) {
-    return new Response(await response.body, {
+    const body = replacer ? replacer(await response.text()) : await response.body;
+    return new Response(body, {
       status: 200,
       headers: { "content-type": mimeType },
     });
@@ -68,7 +71,7 @@ export const copyHeader = curry((original, adds, removes) => {
  * 修改url
  * @param {String} url 需要修改的url字符串
  * @param {Object} modifiers 要修改的参数和新的值
- * @returns
+ * @returns {URL}
  */
 export function modifyURL(url, modifiers) {
   const urlObj = new URL(url);
@@ -78,11 +81,11 @@ export function modifyURL(url, modifiers) {
 /**
  * 发出请求。
  * @param {Request} request Request对象
- * @returns {Response}
+ * @returns {Promise<Response>}
  */
-export async function makeWebRequest(request) {
+export function makeWebRequest(request) {
   try {
-    return await fetch(request);
+    return fetch(request);
   } catch (e) {
     return e;
   }

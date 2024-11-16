@@ -1,7 +1,7 @@
 import { compose, copyHeader, modifyURL, fetchLocal, makeWebRequest, buildResponse } from "library";
 
 /** 最终外部访问的域名。在将替换url的工作交给客户端sw后，这个甚至不需要了 */
-const outerDomain = "translate.example.com";
+const outerOrigin = "https://translate.example.com";
 
 /** 反代目标网站 */
 const upstreamDomain = "translate.google.com";
@@ -18,9 +18,9 @@ const proxyAllowedWhiteList = [/^encrypted-v{0,1}tbn[0-9]+.gstatic.com+$/, /^ssl
 /** 为响应体进行字符串替换的Map */
 const strReplaceMap = {
   /** 插入自定义代码以及注册service worker的代码 */
-  "<head>": `<head><script src="//${outerDomain}/insert-head.js"></script>`,
+  "<head>": `<head><link rel="search" type="application/opensearchdescription+xml" href="${outerOrigin}/opensearch.xml"><script src="${outerOrigin}/insert-head.js"></script>`,
   /** 插入自定义代码，但加载顺序最靠后 */
-  "</body>": `<script src="//${outerDomain}/insert-body.js"></script></body>`,
+  "</body>": `<script src="${outerOrigin}/insert-body.js"></script></body>`,
 };
 /** 替换上游响应体中的特定字符 */
 function modifyResponseText(respsonseText) {
@@ -34,12 +34,16 @@ function modifyResponseText(respsonseText) {
 /**
  * 通过匹配请求url pathname，来返回自定义响应。
  * @param {URL} url 请求的URL对象
- * @returns {Response}
+ * @param {()=>Promise<Response>} fetchFile 用于读取本地文件的函数。
+ * @returns {Promise<Response>|Response}
  */
-function findCustomResponseByPath(url) {
+function findCustomResponseByPath(url, fetchFile) {
   const pathname = url.pathname;
   /** 需要匹配的完整的pathname，和其对应的自定义响应 */
-  const customResponse = {};
+  const customResponse = {
+    /** 使浏览器可以自动发现搜索引擎 */
+    "/opensearch.xml": () => fetchFile("/opensearch.xml", (text) => text.replace(/{\$origin}/g, outerOrigin)),
+  };
   if (pathname in customResponse) {
     return customResponse[pathname]();
   }
@@ -118,16 +122,16 @@ function isRealURLinWhiteList(urlString) {
 export default {
   async fetch(request, env) {
     /** 访问本地文件 */
-    const findLocalFileByPath = (pathname) => fetchLocal(env.files, "google-translate", pathname.slice(1));
+    const findLocalFileByPath = (pathname, replacer) => fetchLocal(env.files, "google-translate", pathname.slice(1), replacer);
     /** 这个访问本地文件的参数绑定了命名空间“libs”，因此它从 public/libs/ 下寻找文件 */
-    const findLibFileByPath = (pathname) => fetchLocal(env.files, "libs", pathname.slice(1));
+    const findLibFileByPath = (pathname, replacer) => fetchLocal(env.files, "libs", pathname.slice(1), replacer);
     // 先判断请求是否源于禁止访问的区域
     if (isFromBlockedRegion(request)) {
       return buildResponse(403, {}, "Access denied: WorkersProxy is not available in your region yet.");
     }
     const requestURL = new URL(request.url);
     // 尝试查找自定义响应
-    const customResponse = findCustomResponseByPath(requestURL);
+    const customResponse = await findCustomResponseByPath(requestURL, findLocalFileByPath);
     if (customResponse instanceof Response) {
       return customResponse;
     }

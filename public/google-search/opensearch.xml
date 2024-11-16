@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    <ShortName>谷歌搜索镜像</ShortName>
+    <Description>谷歌搜索镜像，https://github.com/yige233/workerd_proxy_for_Google</Description>
+    <Contact>yige233@gmail.com</Contact>
+    <InputEncoding>UTF-8</InputEncoding>
+    <SyndicationRight>limited</SyndicationRight>
+    <Image width="32" height="32" type="image/x-icon">{$origin}/favicon.ico</Image>
+    <Url type="text/html" template="{$origin}/search?q={searchTerms}"/>
+</OpenSearchDescription>
