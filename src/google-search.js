@@ -6,6 +6,9 @@ const outerOrigin = "https://search.example.com";
 /** 反代目标网站 */
 const upstreamDomain = "www.google.com.hk";
 
+/**  服务器的外部ip。该ip可能会被意外暴露，所以至少需要基本的字符串替换 */
+const myIP = "127.0.0.1";
+
 /** 浏览器打开无痕模式访问Google，调好设置后把cookie复制过来。可以让镜像站始终使用自定义好的设置（比如深色模式） */
 const cookies = ``;
 
@@ -13,16 +16,17 @@ const cookies = ``;
 const blockedRegion = ["TK"];
 
 /** 跨域请求的域名白名单。程序允许客户端通过url参数或者特殊请求头提供该请求的真实url。正则表达式会测试提供的url的host */
-const proxyAllowedWhiteList = [/^encrypted-v{0,1}tbn[0-9]+.gstatic.com+$/, /^.*.google.com.hk+$/, /^i.ytimg.com+$/, /^www.youtube.com+$/, /^lens.google.com+$/];
+const proxyAllowedWhiteList = [/^encrypted-v{0,1}tbn[0-9]+.gstatic.com+$/, /^.*.google.com+$/, /^.*.google.com.hk+$/, /^i.ytimg.com+$/, /^www.youtube.com+$/, /^lens.google.com+$/];
 
 /** 为响应体进行字符串替换的Map */
 const strReplaceMap = {
-  /** 插入自定义代码以及注册service worker的代码 */
-  "<head>": `<head><link rel="search" type="application/opensearchdescription+xml" href="${outerOrigin}/opensearch.xml"><script src="${outerOrigin}/insert-head.js"></script>`,
+  /** 插入自定义代码以及注册service worker的代码；禁止搜索引擎抓取本网页；注册为可用的搜索引擎 */
+  "<head>": `<head><meta name="robots" content="noindex"><link rel="search" type="application/opensearchdescription+xml" href="${outerOrigin}/opensearch.xml"><script src="${outerOrigin}/insert-head.js"></script>`,
   /** 插入自定义代码，但加载顺序最靠后 */
   "</body>": `<script src="${outerOrigin}/insert-body.js"></script></body>`,
   /** 针对谷歌图片搜索，屏蔽这个发不出去的请求 */
   [`<iframe src="/gen204" style="display:none;" alt=""></iframe>`]: "",
+  [myIP]: "127.0.0.1",
 };
 /**
  * 替换上游响应体中的特定字符
@@ -85,7 +89,7 @@ function isFromBlockedRegion(request) {
  */
 function isModifyResBodyRequired(headers) {
   const contentType = headers?.get("content-type")?.toLowerCase() ?? "";
-  return contentType.includes("text/html") && contentType.includes("utf-8");
+  return contentType.includes("text/html");
 }
 
 /**
@@ -134,7 +138,7 @@ export default {
     const findLibFileByPath = (pathname, replacer) => fetchLocal(env.files, "libs", pathname.slice(1), replacer);
     // 先判断请求是否源于禁止访问的区域
     if (isFromBlockedRegion(request)) {
-      return buildResponse(403, {}, "Access denied: WorkersProxy is not available in your region yet.");
+      return buildResponse(403, {}, "Access denied.");
     }
     const requestURL = new URL(request.url);
     // 尝试查找自定义响应
@@ -156,7 +160,7 @@ export default {
     const realURL = findRealURL(request);
     const realURLinWhiteList = isRealURLinWhiteList(realURL);
     if (realURL && !realURLinWhiteList) {
-      return buildResponse(403, {}, "Access denied: The server refused to handle the request.");
+      return buildResponse(302, { location: realURL });
     }
     // 构建新的请求
     const newRequest = buildWebRequest(request, realURL && realURLinWhiteList ? realURL : undefined);

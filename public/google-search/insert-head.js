@@ -9,20 +9,35 @@ function proxiedURL(original) {
 }
 Object.defineProperty(HTMLIFrameElement.prototype, "src", {
   get: function () {
-    return this._src || this.getAttribute("src");
+    return this.getAttribute("src") || "";
   },
   set: function (value) {
-    this._src = value;
     this.setAttribute("src", proxiedURL(value));
   },
 });
 Object.defineProperty(HTMLFormElement.prototype, "action", {
   get: function () {
-    return this._action || this.getAttribute("action");
+    return this.getAttribute("action") || "";
   },
   set: function (value) {
-    this._action = value;
     this.setAttribute("action", proxiedURL(value));
+  },
+});
+Object.defineProperty(HTMLAnchorElement.prototype, "href", {
+  get: function () {
+    return this.getAttribute("href") || "";
+  },
+  set: function (value) {
+    const newURL = (() => {
+      try {
+        const url = new URL(value).searchParams.get("url");
+        if (url) return url;
+        return value;
+      } catch {
+        return value;
+      }
+    })();
+    this.setAttribute("href", newURL);
   },
 });
 (async () => {
